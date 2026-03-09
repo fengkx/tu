@@ -1,7 +1,22 @@
 [package]
 name = "tu"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+
+[package.metadata.release]
+allow-branch = ["master"]
+publish = false
+push-remote = "origin"
+tag-name = "v{{version}}"
+tag-message = "release: v{{version}}"
+pre-release-commit-message = "release: v{{version}}"
+pre-release-hook = ["just", "release-changelog-hook"]
+
+[[package.metadata.release.pre-release-replacements]]
+file = "pyproject.toml"
+search = '^version = "[^"]+"$'
+replace = 'version = "{{version}}"'
+min = 1
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive"] }

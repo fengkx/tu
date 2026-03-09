@@ -1,0 +1,41 @@
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+"""
+body = """
+{% if version %}
+## {{ version }} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}
+## Unreleased
+{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {{ commit.message | trim }}
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+render_always = true
+postprocessors = [
+  { pattern = '(?m)^- [A-Za-z0-9_-]+(?:\([^\n)]*\))?!?:\s+', replace = '- ' },
+]
+
+[git]
+conventional_commits = false
+filter_unconventional = false
+split_commits = false
+use_branch_tags = true
+sort_commits = "oldest"
+tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+$'
+commit_parsers = [
+  { message = '^release:', skip = true },
+  { message = '^feat(\([^)]+\))?!?:', group = 'Added' },
+  { message = '^fix(\([^)]+\))?!?:', group = 'Fixed' },
+  { message = '^docs(\([^)]+\))?!?:', group = 'Documentation' },
+  { message = '^test(\([^)]+\))?!?:', group = 'Tests' },
+  { message = '^(ci|chore|build|refactor|perf)(\([^)]+\))?!?:', group = 'Internal' },
+  { message = '.*', group = 'Other' },
+]

@@ -294,3 +294,25 @@ just test   # run the full Rust test suite
 ```
 
 `just ready` is the recommended entrypoint for contributors. It ensures the project virtualenv exists, synchronizes the Python test dependency used by integration tests, and then runs `cargo test`.
+
+## Release
+
+Preview a release without changing the repository:
+
+```bash
+just release-plan <version>
+```
+
+Create the local release commit, tag, and changelog:
+
+```bash
+just release <version>
+```
+
+Push the branch and tag to GitHub:
+
+```bash
+just publish-release <version>
+```
+
+These commands run `just ready` first, update the version, regenerate `CHANGELOG.md`, create a `release: vX.Y.Z` commit, and create an annotated `vX.Y.Z` tag. After the tag is pushed, GitHub Actions creates the GitHub Release and uploads the platform archives.
