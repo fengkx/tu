@@ -276,16 +276,21 @@ Warnings, such as skipped binary files, are written to stderr.
 - `--max-depth` only affects displayed entries. Deeper files still contribute to ancestor aggregates.
 - `--summarize` exists for clarity, but summary-only output is already the default.
 
-## Development
+## Contributing
 
-Run the full test suite:
-
-```bash
-cargo test
-```
-
-Run only CLI integration tests:
+Use `just` to set up the local environment and run checks:
 
 ```bash
-cargo test --test cli
+just ready
 ```
+
+Useful recipes:
+
+```bash
+just venv   # create .venv if it does not exist
+just lock   # refresh uv.lock
+just sync   # install Python dev dependencies into .venv
+just test   # run the full Rust test suite
+```
+
+`just ready` is the recommended entrypoint for contributors. It ensures the project virtualenv exists, synchronizes the Python test dependency used by integration tests, and then runs `cargo test`.

@@ -1,0 +1,14 @@
+[project]
+name = "tu-python-tools"
+version = "0.1.0"
+description = "Python tooling for tu integration tests"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "tiktoken>=0.9,<1",
+]
+
+[tool.uv]
+package = false
