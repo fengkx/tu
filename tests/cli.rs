@@ -5,7 +5,24 @@ use std::path::Path;
 use predicates::prelude::*;
 use serde_json::Value;
 
-use common::{cargo_bin, fixture_path, tempdir, write_bytes, write_text};
+use common::{cargo_bin, fixture_path, python_tiktoken_count, tempdir, write_bytes, write_text};
+
+fn stdin_json_tokens(input: &str) -> u64 {
+    let output = cargo_bin()
+        .args(["--json", "-"])
+        .write_stdin(input)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+    let json: Value = serde_json::from_str(&stdout).expect("parse json");
+
+    json["entries"][0]["tokens"]
+        .as_u64()
+        .expect("stdin token count")
+}
 
 #[test]
 fn respects_gitignore_by_default() {
@@ -265,4 +282,22 @@ fn hf_backend_counts_using_fixture_tokenizer() {
     let stdout = String::from_utf8(output).expect("utf8 stdout");
 
     assert!(stdout.starts_with("1\t"));
+}
+
+#[test]
+fn stdin_chinese_without_newline_matches_python_tiktoken() {
+    let input = "中文";
+    let expected = python_tiktoken_count("o200k_base", input);
+
+    assert_eq!(expected, 1);
+    assert_eq!(stdin_json_tokens(input), expected);
+}
+
+#[test]
+fn stdin_chinese_with_trailing_newline_matches_python_tiktoken() {
+    let input = "中文\n";
+    let expected = python_tiktoken_count("o200k_base", input);
+
+    assert_eq!(expected, 2);
+    assert_eq!(stdin_json_tokens(input), expected);
 }
