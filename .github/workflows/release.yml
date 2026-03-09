@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        uses: taiki-e/create-gh-release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-assets:
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-amd64
+            target: x86_64-unknown-linux-musl
+            archive: tu-linux-amd64
+            build_tool: cargo-zigbuild
+          - os: ubuntu-24.04
+            platform: linux-arm64
+            target: aarch64-unknown-linux-musl
+            archive: tu-linux-arm64
+            build_tool: cargo-zigbuild
+          - os: macos-15-intel
+            platform: darwin-amd64
+            target: x86_64-apple-darwin
+            archive: tu-darwin-amd64
+            build_tool: cargo
+          - os: macos-15
+            platform: darwin-arm64
+            target: aarch64-apple-darwin
+            archive: tu-darwin-arm64
+            build_tool: cargo
+          - os: windows-2022
+            platform: windows-amd64
+            target: x86_64-pc-windows-msvc
+            archive: tu-windows-amd64
+            build_tool: cargo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${{ matrix.target }}"
+
+      - name: Build and upload release archive
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: tu
+          target: ${{ matrix.target }}
+          archive: ${{ matrix.archive }}
+          build-tool: ${{ matrix.build_tool }}
+          tar: unix
+          zip: windows
+          locked: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-bina-manifest:
+    needs: upload-assets
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Generate bina manifest
+        run: |
+          cat > bina.json <<'EOF'
+          {
+            "platforms": {
+              "linux-amd64": {
+                "asset": "tu-linux-amd64.tar.gz",
+                "file": "tu"
+              },
+              "linux-arm64": {
+                "asset": "tu-linux-arm64.tar.gz",
+                "file": "tu"
+              },
+              "darwin-amd64": {
+                "asset": "tu-darwin-amd64.tar.gz",
+                "file": "tu"
+              },
+              "darwin-arm64": {
+                "asset": "tu-darwin-arm64.tar.gz",
+                "file": "tu"
+              },
+              "windows-amd64": {
+                "asset": "tu-windows-amd64.zip",
+                "file": "tu.exe"
+              }
+            }
+          }
+          EOF
+
+      - name: Upload bina manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" bina.json --clobber
