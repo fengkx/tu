@@ -7,6 +7,24 @@ use tokenizers::Tokenizer;
 
 use crate::hf_registry::HfBuiltinTokenizer;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]
+pub enum BuiltinTokenizerId {
+    #[value(name = "o200k_base")]
+    O200kBase,
+    #[value(name = "cl100k_base")]
+    Cl100kBase,
+    #[value(name = "p50k_base")]
+    P50kBase,
+    #[value(name = "r50k_base")]
+    R50kBase,
+    #[value(name = "qwen3")]
+    Qwen3,
+    #[value(name = "deepseek_v3_2")]
+    DeepseekV32,
+    #[value(name = "glm5")]
+    Glm5,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenAiEncoding {
@@ -81,6 +99,46 @@ impl OpenAiEncoding {
     }
 }
 
+impl BuiltinTokenizerId {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::O200kBase => "o200k_base",
+            Self::Cl100kBase => "cl100k_base",
+            Self::P50kBase => "p50k_base",
+            Self::R50kBase => "r50k_base",
+            Self::Qwen3 => "qwen3",
+            Self::DeepseekV32 => "deepseek_v3_2",
+            Self::Glm5 => "glm5",
+        }
+    }
+
+    pub fn is_hugging_face(self) -> bool {
+        matches!(self, Self::Qwen3 | Self::DeepseekV32 | Self::Glm5)
+    }
+
+    pub fn from_hf_builtin(name: HfBuiltinTokenizer) -> Self {
+        match name {
+            HfBuiltinTokenizer::Qwen3 => Self::Qwen3,
+            HfBuiltinTokenizer::DeepseekV32 => Self::DeepseekV32,
+            HfBuiltinTokenizer::Glm5 => Self::Glm5,
+        }
+    }
+
+    pub fn into_tokenizer_config(self) -> TokenizerConfig {
+        match self {
+            Self::O200kBase => TokenizerConfig::openai(OpenAiEncoding::O200kBase),
+            Self::Cl100kBase => TokenizerConfig::openai(OpenAiEncoding::Cl100kBase),
+            Self::P50kBase => TokenizerConfig::openai(OpenAiEncoding::P50kBase),
+            Self::R50kBase => TokenizerConfig::openai(OpenAiEncoding::R50kBase),
+            Self::Qwen3 => TokenizerConfig::huggingface_builtin(HfBuiltinTokenizer::Qwen3),
+            Self::DeepseekV32 => {
+                TokenizerConfig::huggingface_builtin(HfBuiltinTokenizer::DeepseekV32)
+            }
+            Self::Glm5 => TokenizerConfig::huggingface_builtin(HfBuiltinTokenizer::Glm5),
+        }
+    }
+}
+
 impl TokenizerConfig {
     pub fn openai(encoding: OpenAiEncoding) -> Self {
         Self {
@@ -114,6 +172,10 @@ impl TokenizerConfig {
     }
 
     pub fn parse_compare_spec(value: &str) -> Result<Self, String> {
+        if let Ok(id) = BuiltinTokenizerId::from_str(value, false) {
+            return Ok(id.into_tokenizer_config());
+        }
+
         let (kind, raw_value) = value
             .split_once(':')
             .ok_or_else(|| format!("invalid tokenizer spec `{value}`"))?;
@@ -123,6 +185,7 @@ impl TokenizerConfig {
         }
 
         match kind {
+            "file" => Self::huggingface(PathBuf::from(raw_value)),
             "openai" => OpenAiEncoding::parse(raw_value).map(Self::openai),
             "hf_builtin" => HfBuiltinTokenizer::from_str(raw_value, false)
                 .map(Self::huggingface_builtin)
@@ -209,7 +272,9 @@ mod tests {
 
     use crate::hf_registry::HfBuiltinTokenizer;
 
-    use super::{OpenAiEncoding, TokenizerBackend, TokenizerConfig, TokenizerSpec};
+    use super::{
+        BuiltinTokenizerId, OpenAiEncoding, TokenizerBackend, TokenizerConfig, TokenizerSpec,
+    };
 
     const MIXED_SAMPLE_A: &str = "Hello，中文🙂tokenizer\nline2";
     const MIXED_SAMPLE_B: &str = "function_call({\"城市\":\"上海\",\"温度\":23.5})🚀";
@@ -293,6 +358,29 @@ mod tests {
         assert_eq!(
             config.spec,
             TokenizerSpec::hf_builtin(HfBuiltinTokenizer::Qwen3)
+        );
+    }
+
+    #[test]
+    fn parse_bare_builtin_compare_spec_uses_unified_id() {
+        let config = TokenizerConfig::parse_compare_spec("qwen3").expect("config");
+
+        assert_eq!(config.label, "hf:qwen3");
+        assert_eq!(
+            config.spec,
+            BuiltinTokenizerId::Qwen3.into_tokenizer_config().spec
+        );
+    }
+
+    #[test]
+    fn parse_file_compare_spec_uses_file_prefix() {
+        let config = TokenizerConfig::parse_compare_spec("file:tests/fixtures/hf-tokenizer.json")
+            .expect("config");
+
+        assert_eq!(config.label, "hf:hf-tokenizer.json");
+        assert_eq!(
+            config.spec,
+            TokenizerSpec::hf_file(PathBuf::from("tests/fixtures/hf-tokenizer.json"))
         );
     }
 

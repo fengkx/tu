@@ -134,46 +134,52 @@ The default backend is `openai` with `o200k_base`:
 tu .
 ```
 
-You can switch encodings:
+You can switch builtin tokenizers:
 
 ```bash
 tu --encoding cl100k_base .
 tu --encoding p50k_base .
 tu --encoding r50k_base .
+tu --encoding qwen3 .
+tu --encoding deepseek_v3_2 .
+tu --encoding glm5 .
 ```
 
 Compare multiple tokenizers in one run:
 
 ```bash
-tu --compare openai:o200k_base --compare openai:cl100k_base .
-tu --compare openai:o200k_base --compare hf:./tokenizer.json .
-tu --compare hf_builtin:qwen3 --compare hf_builtin:deepseek_v3_2 .
+tu --compare o200k_base --compare cl100k_base .
+tu --compare o200k_base --compare qwen3 .
+tu --compare qwen3 --compare file:./tokenizer.json .
 ```
 
-Available OpenAI encodings:
+Available builtin tokenizer ids:
 
 - `o200k_base`
 - `cl100k_base`
 - `p50k_base`
 - `r50k_base`
+- `qwen3`
+- `deepseek_v3_2`
+- `glm5`
 
 ### HuggingFace backend
 
-You can use one of the builtin tokenizer families:
+Builtin HuggingFace tokenizers are selected through `--encoding`:
 
 ```bash
-tu --tokenizer hf --hf-tokenizer qwen3 .
-tu --tokenizer hf --hf-tokenizer deepseek_v3_2 .
-tu --tokenizer hf --hf-tokenizer glm5 .
+tu --encoding qwen3 .
+tu --encoding deepseek_v3_2 .
+tu --encoding glm5 .
 ```
 
-Or point `tu` at a local `tokenizer.json`:
+Or point `tu` at a local `tokenizer.json` without setting `--tokenizer`:
 
 ```bash
-tu --tokenizer hf --tokenizer-file ./tokenizer.json .
+tu --tokenizer-file ./tokenizer.json .
 ```
 
-Builtin families are embedded into the binary for offline use. A local tokenizer file is still
+Builtin families are embedded into the binary for offline use. A local tokenizer file remains
 useful when you want counts for a model-specific tokenizer outside the bundled set.
 
 ## Output
@@ -224,9 +230,8 @@ Options:
   -a, --all                    Output every file and directory aggregate
   -s, --summarize              Output only the summary for each root input
   -d, --max-depth <N>          Limit displayed depth. Deeper descendants are still counted in aggregates
-      --tokenizer <TOKENIZER>  Select the tokenizer backend [default: openai] [possible values: openai, hf]
-      --encoding <ENCODING>    Select the OpenAI encoding [default: o200k_base] [possible values: o200k_base, cl100k_base, p50k_base, r50k_base]
-      --hf-tokenizer <NAME>    Select a builtin HuggingFace tokenizer family [possible values: qwen3, deepseek_v3_2, glm5]
+      --tokenizer <TOKENIZER>  Select the tokenizer backend [possible values: openai, hf]
+      --encoding <ENCODING>    Select a builtin tokenizer family [possible values: o200k_base, cl100k_base, p50k_base, r50k_base, qwen3, deepseek_v3_2, glm5]
       --tokenizer-file <PATH>  Path to a HuggingFace tokenizer.json
       --binary <BINARY>        Binary file handling policy [default: skip] [possible values: skip, lossy, error]
       --no-ignore              Disable .gitignore, .ignore, and git exclude rules
@@ -263,20 +268,21 @@ Count a prompt under a different tokenizer:
 
 ```bash
 tu --encoding cl100k_base prompt.md
+tu --encoding qwen3 prompt.md
 ```
 
 Count with a HuggingFace tokenizer:
 
 ```bash
-tu --tokenizer hf --hf-tokenizer qwen3 docs
-tu --tokenizer hf --tokenizer-file ./tokenizer.json docs
+tu --encoding qwen3 docs
+tu --tokenizer-file ./tokenizer.json docs
 ```
 
 Compare OpenAI and HuggingFace tokenizers:
 
 ```bash
-tu --compare openai:o200k_base --compare hf:./tokenizer.json docs
-tu --compare hf_builtin:qwen3 --compare hf_builtin:glm5 docs
+tu --compare o200k_base --compare qwen3 docs
+tu --compare qwen3 --compare file:./tokenizer.json docs
 ```
 
 Use in shell pipelines:
@@ -302,6 +308,7 @@ Warnings, such as skipped binary files, are written to stderr.
 ## Notes
 
 - Token counts depend on the selected tokenizer. Different backends or encodings will produce different numbers.
+- `--tokenizer` is now optional for builtin tokenizers and mostly acts as an explicit compatibility constraint.
 - `--max-depth` only affects displayed entries. Deeper files still contribute to ancestor aggregates.
 - `--summarize` exists for clarity, but summary-only output is already the default.
 

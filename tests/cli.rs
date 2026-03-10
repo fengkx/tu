@@ -263,7 +263,7 @@ fn hf_tokenizer_requires_tokenizer_file() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "one of --hf-tokenizer or --tokenizer-file is required",
+            "--tokenizer hf requires --encoding with a HuggingFace builtin or --tokenizer-file",
         ));
 }
 
@@ -276,7 +276,7 @@ fn hf_builtin_tokenizer_counts_using_embedded_asset() {
     );
 
     let output = cargo_bin()
-        .args(["--tokenizer", "hf", "--hf-tokenizer", "qwen3"])
+        .args(["--encoding", "qwen3"])
         .arg(tempdir.path())
         .assert()
         .success()
@@ -297,7 +297,7 @@ fn hf_builtin_json_output_includes_builtin_source() {
     );
 
     let output = cargo_bin()
-        .args(["--json", "--tokenizer", "hf", "--hf-tokenizer", "glm5"])
+        .args(["--json", "--encoding", "glm5"])
         .arg(tempdir.path().join("sample.txt"))
         .assert()
         .success()
@@ -334,8 +334,6 @@ fn hf_backend_counts_using_fixture_tokenizer() {
 
     let output = cargo_bin()
         .args([
-            "--tokenizer",
-            "hf",
             "--tokenizer-file",
             fixture_path("hf-tokenizer.json")
                 .to_str()
@@ -355,13 +353,7 @@ fn hf_backend_counts_using_fixture_tokenizer() {
 #[test]
 fn compare_text_output_uses_wide_table() {
     let output = cargo_bin()
-        .args([
-            "--compare",
-            "openai:o200k_base",
-            "--compare",
-            "openai:cl100k_base",
-            "-",
-        ])
+        .args(["--compare", "o200k_base", "--compare", "cl100k_base", "-"])
         .write_stdin("中文")
         .assert()
         .success()
@@ -377,12 +369,12 @@ fn compare_text_output_uses_wide_table() {
 #[test]
 fn compare_json_output_supports_mixed_tokenizers() {
     let hf_spec = format!(
-        "hf:{}",
+        "file:{}",
         fixture_path("hf-tokenizer.json")
             .to_str()
             .expect("utf8 fixture")
     );
-    let json = compare_json("hello world", &["openai:o200k_base", &hf_spec]);
+    let json = compare_json("hello world", &["o200k_base", &hf_spec]);
 
     assert_eq!(json["tokenizers"][0]["label"], "o200k_base");
     assert_eq!(json["tokenizers"][1]["label"], "hf:hf-tokenizer.json");
@@ -394,13 +386,7 @@ fn compare_json_output_supports_mixed_tokenizers() {
 #[test]
 fn compare_rejects_single_tokenizer_flags() {
     cargo_bin()
-        .args([
-            "--compare",
-            "openai:o200k_base",
-            "--encoding",
-            "cl100k_base",
-            ".",
-        ])
+        .args(["--compare", "o200k_base", "--encoding", "cl100k_base", "."])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -410,10 +396,7 @@ fn compare_rejects_single_tokenizer_flags() {
 
 #[test]
 fn compare_json_output_supports_builtin_hf_tokenizers() {
-    let json = compare_json(
-        "Hello，中文🙂tokenizer\nline2",
-        &["hf_builtin:qwen3", "hf_builtin:deepseek_v3_2"],
-    );
+    let json = compare_json("Hello，中文🙂tokenizer\nline2", &["qwen3", "deepseek_v3_2"]);
 
     assert_eq!(json["tokenizers"][0]["label"], "hf:qwen3");
     assert_eq!(json["tokenizers"][0]["source"], "builtin");
@@ -425,7 +408,7 @@ fn compare_json_output_supports_builtin_hf_tokenizers() {
 #[test]
 fn compare_stdin_matches_python_for_multiple_openai_encodings() {
     let input = "中文\n";
-    let json = compare_json(input, &["openai:o200k_base", "openai:cl100k_base"]);
+    let json = compare_json(input, &["o200k_base", "cl100k_base"]);
     let expected_o200k = python_tiktoken_count("o200k_base", input);
     let expected_cl100k = python_tiktoken_count("cl100k_base", input);
 
@@ -451,4 +434,91 @@ fn stdin_chinese_with_trailing_newline_matches_python_tiktoken() {
 
     assert_eq!(expected, 2);
     assert_eq!(stdin_json_tokens(input), expected);
+}
+
+#[test]
+fn encoding_qwen3_works_without_explicit_backend() {
+    let tempdir = tempdir();
+    write_text(
+        tempdir.path().join("sample.txt"),
+        "Hello，中文🙂tokenizer\nline2",
+    );
+
+    let output = cargo_bin()
+        .args(["--encoding", "qwen3"])
+        .arg(tempdir.path().join("sample.txt"))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+
+    assert!(stdout.starts_with("8\t"));
+}
+
+#[test]
+fn tokenizer_file_works_without_explicit_backend() {
+    let tempdir = tempdir();
+    write_text(tempdir.path().join("sample.txt"), "hello world");
+
+    let output = cargo_bin()
+        .args([
+            "--tokenizer-file",
+            fixture_path("hf-tokenizer.json")
+                .to_str()
+                .expect("utf8 fixture"),
+        ])
+        .arg(tempdir.path().join("sample.txt"))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+
+    assert!(stdout.starts_with("1\t"));
+}
+
+#[test]
+fn tokenizer_openai_rejects_hf_builtin_encoding() {
+    cargo_bin()
+        .args(["--tokenizer", "openai", "--encoding", "qwen3", "."])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--tokenizer openai cannot be used with --encoding qwen3",
+        ));
+}
+
+#[test]
+fn tokenizer_hf_rejects_openai_builtin_encoding() {
+    cargo_bin()
+        .args(["--tokenizer", "hf", "--encoding", "o200k_base", "."])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--tokenizer hf cannot be used with --encoding o200k_base",
+        ));
+}
+
+#[test]
+fn compatibility_alias_hf_tokenizer_still_works() {
+    let tempdir = tempdir();
+    write_text(
+        tempdir.path().join("sample.txt"),
+        "Hello，中文🙂tokenizer\nline2",
+    );
+
+    let output = cargo_bin()
+        .args(["--tokenizer", "hf", "--hf-tokenizer", "qwen3"])
+        .arg(tempdir.path().join("sample.txt"))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+
+    assert!(stdout.starts_with("8\t"));
 }
