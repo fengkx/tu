@@ -262,7 +262,55 @@ fn hf_tokenizer_requires_tokenizer_file() {
         .args(["--tokenizer", "hf", "."])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--tokenizer-file is required"));
+        .stderr(predicate::str::contains(
+            "one of --hf-tokenizer or --tokenizer-file is required",
+        ));
+}
+
+#[test]
+fn hf_builtin_tokenizer_counts_using_embedded_asset() {
+    let tempdir = tempdir();
+    write_text(
+        tempdir.path().join("sample.txt"),
+        "Hello，中文🙂tokenizer\nline2",
+    );
+
+    let output = cargo_bin()
+        .args(["--tokenizer", "hf", "--hf-tokenizer", "qwen3"])
+        .arg(tempdir.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+
+    assert!(stdout.starts_with("8\t"));
+}
+
+#[test]
+fn hf_builtin_json_output_includes_builtin_source() {
+    let tempdir = tempdir();
+    write_text(
+        tempdir.path().join("sample.txt"),
+        "function_call({\"城市\":\"上海\",\"温度\":23.5})🚀",
+    );
+
+    let output = cargo_bin()
+        .args(["--json", "--tokenizer", "hf", "--hf-tokenizer", "glm5"])
+        .arg(tempdir.path().join("sample.txt"))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+    let json: Value = serde_json::from_str(&stdout).expect("parse json");
+
+    assert_eq!(json["tokenizer"]["kind"], "hugging_face");
+    assert_eq!(json["tokenizer"]["source"], "builtin");
+    assert_eq!(json["tokenizer"]["name"], "glm5");
+    assert_eq!(json["total"]["tokens"], 16);
 }
 
 #[test]
@@ -356,8 +404,22 @@ fn compare_rejects_single_tokenizer_flags() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "--compare cannot be used with --tokenizer, --encoding, or --tokenizer-file",
+            "--compare cannot be used with --tokenizer, --encoding, --tokenizer-file, or --hf-tokenizer",
         ));
+}
+
+#[test]
+fn compare_json_output_supports_builtin_hf_tokenizers() {
+    let json = compare_json(
+        "Hello，中文🙂tokenizer\nline2",
+        &["hf_builtin:qwen3", "hf_builtin:deepseek_v3_2"],
+    );
+
+    assert_eq!(json["tokenizers"][0]["label"], "hf:qwen3");
+    assert_eq!(json["tokenizers"][0]["source"], "builtin");
+    assert_eq!(json["tokenizers"][1]["label"], "hf:deepseek_v3_2");
+    assert_eq!(json["results"][0]["total"]["tokens"], 8);
+    assert_eq!(json["results"][1]["total"]["tokens"], 10);
 }
 
 #[test]

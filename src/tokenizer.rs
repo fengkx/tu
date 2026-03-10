@@ -5,6 +5,8 @@ use serde::Serialize;
 use tiktoken_rs::{CoreBPE, cl100k_base, o200k_base, p50k_base, r50k_base};
 use tokenizers::Tokenizer;
 
+use crate::hf_registry::HfBuiltinTokenizer;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenAiEncoding {
@@ -21,8 +23,29 @@ pub enum OpenAiEncoding {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TokenizerSpec {
-    OpenAi { encoding: OpenAiEncoding },
-    HuggingFace { tokenizer_file: PathBuf },
+    OpenAi {
+        encoding: OpenAiEncoding,
+    },
+    HuggingFace {
+        #[serde(flatten)]
+        spec: HuggingFaceTokenizerSpec,
+    },
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct HuggingFaceTokenizerSpec {
+    pub source: HuggingFaceTokenizerSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<HfBuiltinTokenizer>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokenizer_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HuggingFaceTokenizerSource {
+    Builtin,
+    File,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -79,8 +102,15 @@ impl TokenizerConfig {
 
         Ok(Self {
             label: format!("hf:{file_name}"),
-            spec: TokenizerSpec::HuggingFace { tokenizer_file },
+            spec: TokenizerSpec::hf_file(tokenizer_file),
         })
+    }
+
+    pub fn huggingface_builtin(name: HfBuiltinTokenizer) -> Self {
+        Self {
+            label: format!("hf:{}", name.as_str()),
+            spec: TokenizerSpec::hf_builtin(name),
+        }
     }
 
     pub fn parse_compare_spec(value: &str) -> Result<Self, String> {
@@ -94,6 +124,9 @@ impl TokenizerConfig {
 
         match kind {
             "openai" => OpenAiEncoding::parse(raw_value).map(Self::openai),
+            "hf_builtin" => HfBuiltinTokenizer::from_str(raw_value, false)
+                .map(Self::huggingface_builtin)
+                .map_err(|_| format!("unsupported HuggingFace builtin tokenizer `{raw_value}`")),
             "hf" => Self::huggingface(PathBuf::from(raw_value)),
             _ => Err(format!("unsupported tokenizer kind `{kind}`")),
         }
@@ -114,9 +147,26 @@ impl TokenizerBackend {
 
                 Ok(Self::OpenAi(bpe))
             }
-            TokenizerSpec::HuggingFace { tokenizer_file } => Tokenizer::from_file(tokenizer_file)
-                .map(Self::HuggingFace)
-                .map_err(|err| err.to_string()),
+            TokenizerSpec::HuggingFace { spec } => match spec.source {
+                HuggingFaceTokenizerSource::Builtin => {
+                    let name = spec.name.ok_or_else(|| {
+                        String::from("missing builtin tokenizer name for hugging face backend")
+                    })?;
+
+                    Tokenizer::from_bytes(name.load_bytes()?)
+                        .map(Self::HuggingFace)
+                        .map_err(|err| err.to_string())
+                }
+                HuggingFaceTokenizerSource::File => {
+                    let tokenizer_file = spec.tokenizer_file.as_ref().ok_or_else(|| {
+                        String::from("missing tokenizer file for hugging face backend")
+                    })?;
+
+                    Tokenizer::from_file(tokenizer_file)
+                        .map(Self::HuggingFace)
+                        .map_err(|err| err.to_string())
+                }
+            },
         }
     }
 
@@ -131,11 +181,38 @@ impl TokenizerBackend {
     }
 }
 
+impl TokenizerSpec {
+    pub fn hf_builtin(name: HfBuiltinTokenizer) -> Self {
+        Self::HuggingFace {
+            spec: HuggingFaceTokenizerSpec {
+                source: HuggingFaceTokenizerSource::Builtin,
+                name: Some(name),
+                tokenizer_file: None,
+            },
+        }
+    }
+
+    pub fn hf_file(tokenizer_file: PathBuf) -> Self {
+        Self::HuggingFace {
+            spec: HuggingFaceTokenizerSpec {
+                source: HuggingFaceTokenizerSource::File,
+                name: None,
+                tokenizer_file: Some(tokenizer_file),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
+    use crate::hf_registry::HfBuiltinTokenizer;
+
     use super::{OpenAiEncoding, TokenizerBackend, TokenizerConfig, TokenizerSpec};
+
+    const MIXED_SAMPLE_A: &str = "Hello，中文🙂tokenizer\nline2";
+    const MIXED_SAMPLE_B: &str = "function_call({\"城市\":\"上海\",\"温度\":23.5})🚀";
 
     fn hf_fixture() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -158,14 +235,29 @@ mod tests {
 
     #[test]
     fn huggingface_fixture_loads_and_counts() {
-        let mut backend = TokenizerBackend::from_spec(&TokenizerSpec::HuggingFace {
-            tokenizer_file: hf_fixture(),
-        })
-        .expect("hf tokenizer");
+        let mut backend = TokenizerBackend::from_spec(&TokenizerSpec::hf_file(hf_fixture()))
+            .expect("hf tokenizer");
 
         let count = backend.count("hello world").expect("count");
 
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn builtin_huggingface_tokenizers_load() {
+        let cases = [
+            (HfBuiltinTokenizer::Qwen3, 8, 15),
+            (HfBuiltinTokenizer::DeepseekV32, 10, 15),
+            (HfBuiltinTokenizer::Glm5, 8, 16),
+        ];
+
+        for (name, expected_a, expected_b) in cases {
+            let mut backend =
+                TokenizerBackend::from_spec(&TokenizerSpec::hf_builtin(name)).expect("hf builtin");
+
+            assert_eq!(backend.count(MIXED_SAMPLE_A).expect("count"), expected_a);
+            assert_eq!(backend.count(MIXED_SAMPLE_B).expect("count"), expected_b);
+        }
     }
 
     #[test]
@@ -183,16 +275,24 @@ mod tests {
 
     #[test]
     fn parse_hf_compare_spec_uses_file_name_as_label() {
-        let config =
-            TokenizerConfig::parse_compare_spec("hf:tests/fixtures/hf-tokenizer.json")
-                .expect("config");
+        let config = TokenizerConfig::parse_compare_spec("hf:tests/fixtures/hf-tokenizer.json")
+            .expect("config");
 
         assert_eq!(config.label, "hf:hf-tokenizer.json");
         assert_eq!(
             config.spec,
-            TokenizerSpec::HuggingFace {
-                tokenizer_file: PathBuf::from("tests/fixtures/hf-tokenizer.json"),
-            }
+            TokenizerSpec::hf_file(PathBuf::from("tests/fixtures/hf-tokenizer.json"))
+        );
+    }
+
+    #[test]
+    fn parse_hf_builtin_compare_spec_uses_builtin_name_as_label() {
+        let config = TokenizerConfig::parse_compare_spec("hf_builtin:qwen3").expect("config");
+
+        assert_eq!(config.label, "hf:qwen3");
+        assert_eq!(
+            config.spec,
+            TokenizerSpec::hf_builtin(HfBuiltinTokenizer::Qwen3)
         );
     }
 

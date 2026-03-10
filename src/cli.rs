@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 
+use crate::hf_registry::HfBuiltinTokenizer;
 use crate::scanner::{BinaryPolicy, ScanOptions};
 use crate::tokenizer::{OpenAiEncoding, TokenizerConfig};
 
@@ -31,6 +32,10 @@ pub struct Cli {
     /// Path to a HuggingFace tokenizer.json.
     #[arg(long, value_name = "PATH")]
     pub tokenizer_file: Option<PathBuf>,
+
+    /// Select a builtin HuggingFace tokenizer family.
+    #[arg(long, value_enum, value_name = "NAME")]
+    pub hf_tokenizer: Option<HfBuiltinTokenizer>,
 
     /// Compare multiple tokenizer specs. Repeatable.
     #[arg(long, value_name = "SPEC")]
@@ -72,9 +77,13 @@ pub struct Cli {
 impl Cli {
     pub fn validate(&self) -> Result<(), String> {
         if !self.compare.is_empty() {
-            if self.tokenizer.is_some() || self.encoding.is_some() || self.tokenizer_file.is_some() {
+            if self.tokenizer.is_some()
+                || self.encoding.is_some()
+                || self.tokenizer_file.is_some()
+                || self.hf_tokenizer.is_some()
+            {
                 return Err(String::from(
-                    "--compare cannot be used with --tokenizer, --encoding, or --tokenizer-file",
+                    "--compare cannot be used with --tokenizer, --encoding, --tokenizer-file, or --hf-tokenizer",
                 ));
             }
 
@@ -89,11 +98,22 @@ impl Cli {
                         "--tokenizer-file can only be used with --tokenizer hf",
                     ));
                 }
+                if self.hf_tokenizer.is_some() {
+                    return Err(String::from(
+                        "--hf-tokenizer can only be used with --tokenizer hf",
+                    ));
+                }
             }
             TokenizerKind::Hf => {
-                if self.tokenizer_file.is_none() {
+                if self.tokenizer_file.is_some() && self.hf_tokenizer.is_some() {
                     return Err(String::from(
-                        "--tokenizer-file is required when --tokenizer hf is selected",
+                        "--hf-tokenizer and --tokenizer-file cannot be used together",
+                    ));
+                }
+
+                if self.tokenizer_file.is_none() && self.hf_tokenizer.is_none() {
+                    return Err(String::from(
+                        "one of --hf-tokenizer or --tokenizer-file is required when --tokenizer hf is selected",
                     ));
                 }
             }
@@ -145,11 +165,19 @@ impl Cli {
 
         match self.tokenizer_kind() {
             TokenizerKind::Openai => Ok(vec![TokenizerConfig::openai(self.encoding())]),
-            TokenizerKind::Hf => Ok(vec![TokenizerConfig::huggingface(
-                self.tokenizer_file.clone().ok_or_else(|| {
-                    String::from("--tokenizer-file is required when --tokenizer hf is selected")
-                })?,
-            )?]),
+            TokenizerKind::Hf => {
+                if let Some(name) = self.hf_tokenizer {
+                    return Ok(vec![TokenizerConfig::huggingface_builtin(name)]);
+                }
+
+                Ok(vec![TokenizerConfig::huggingface(
+                    self.tokenizer_file.clone().ok_or_else(|| {
+                        String::from(
+                            "one of --hf-tokenizer or --tokenizer-file is required when --tokenizer hf is selected",
+                        )
+                    })?,
+                )?])
+            }
         }
     }
 }
@@ -182,6 +210,7 @@ mod tests {
     use clap::Parser;
 
     use super::{Cli, TokenizerKind};
+    use crate::hf_registry::HfBuiltinTokenizer;
     use crate::tokenizer::{OpenAiEncoding, TokenizerConfig};
 
     #[test]
@@ -191,7 +220,7 @@ mod tests {
         assert_eq!(
             cli.validate(),
             Err(String::from(
-                "--tokenizer-file is required when --tokenizer hf is selected",
+                "one of --hf-tokenizer or --tokenizer-file is required when --tokenizer hf is selected",
             )),
         );
     }
@@ -204,6 +233,39 @@ mod tests {
             cli.validate(),
             Err(String::from(
                 "--tokenizer-file can only be used with --tokenizer hf",
+            )),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_openai_with_hf_tokenizer() {
+        let cli = Cli::parse_from(["tu", "--hf-tokenizer", "qwen3", "."]);
+
+        assert_eq!(
+            cli.validate(),
+            Err(String::from(
+                "--hf-tokenizer can only be used with --tokenizer hf",
+            )),
+        );
+    }
+
+    #[test]
+    fn validate_rejects_hf_with_both_tokenizer_sources() {
+        let cli = Cli::parse_from([
+            "tu",
+            "--tokenizer",
+            "hf",
+            "--hf-tokenizer",
+            "qwen3",
+            "--tokenizer-file",
+            "fixture.json",
+            ".",
+        ]);
+
+        assert_eq!(
+            cli.validate(),
+            Err(String::from(
+                "--hf-tokenizer and --tokenizer-file cannot be used together",
             )),
         );
     }
@@ -232,9 +294,20 @@ mod tests {
         assert_eq!(
             cli.tokenizer_configs(),
             Ok(vec![
-                TokenizerConfig::huggingface(PathBuf::from("fixture.json"))
-                    .expect("hf config"),
+                TokenizerConfig::huggingface(PathBuf::from("fixture.json")).expect("hf config"),
             ]),
+        );
+    }
+
+    #[test]
+    fn tokenizer_configs_build_builtin_hf_variant() {
+        let cli = Cli::parse_from(["tu", "--tokenizer", "hf", "--hf-tokenizer", "qwen3", "."]);
+
+        assert_eq!(
+            cli.tokenizer_configs(),
+            Ok(vec![TokenizerConfig::huggingface_builtin(
+                HfBuiltinTokenizer::Qwen3
+            )]),
         );
     }
 
@@ -292,7 +365,7 @@ mod tests {
         assert_eq!(
             cli.validate(),
             Err(String::from(
-                "--compare cannot be used with --tokenizer, --encoding, or --tokenizer-file",
+                "--compare cannot be used with --tokenizer, --encoding, --tokenizer-file, or --hf-tokenizer",
             )),
         );
     }
@@ -304,7 +377,7 @@ mod tests {
             "--compare",
             "openai:o200k_base",
             "--compare",
-            "hf:fixture.json",
+            "hf_builtin:qwen3",
             ".",
         ]);
 
@@ -312,7 +385,7 @@ mod tests {
             cli.tokenizer_configs(),
             Ok(vec![
                 TokenizerConfig::openai(OpenAiEncoding::O200kBase),
-                TokenizerConfig::huggingface(PathBuf::from("fixture.json")).expect("hf config"),
+                TokenizerConfig::huggingface_builtin(HfBuiltinTokenizer::Qwen3),
             ]),
         );
     }

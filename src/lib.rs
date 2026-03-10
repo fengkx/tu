@@ -1,4 +1,5 @@
 mod cli;
+mod hf_registry;
 mod output;
 mod scanner;
 mod tokenizer;
@@ -110,7 +111,14 @@ fn run_tokenizers(
         return tokenizer_configs
             .first()
             .cloned()
-            .map(|config| run_tokenizer(config, scan_options.clone(), roots.to_vec(), stdin_bytes.to_vec()))
+            .map(|config| {
+                run_tokenizer(
+                    config,
+                    scan_options.clone(),
+                    roots.to_vec(),
+                    stdin_bytes.to_vec(),
+                )
+            })
             .transpose()?
             .map(|run| vec![run])
             .ok_or_else(|| String::from("no tokenizer configuration resolved"));

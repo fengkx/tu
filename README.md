@@ -147,6 +147,7 @@ Compare multiple tokenizers in one run:
 ```bash
 tu --compare openai:o200k_base --compare openai:cl100k_base .
 tu --compare openai:o200k_base --compare hf:./tokenizer.json .
+tu --compare hf_builtin:qwen3 --compare hf_builtin:deepseek_v3_2 .
 ```
 
 Available OpenAI encodings:
@@ -158,13 +159,22 @@ Available OpenAI encodings:
 
 ### HuggingFace backend
 
-You can also point `tu` at a local `tokenizer.json`:
+You can use one of the builtin tokenizer families:
+
+```bash
+tu --tokenizer hf --hf-tokenizer qwen3 .
+tu --tokenizer hf --hf-tokenizer deepseek_v3_2 .
+tu --tokenizer hf --hf-tokenizer glm5 .
+```
+
+Or point `tu` at a local `tokenizer.json`:
 
 ```bash
 tu --tokenizer hf --tokenizer-file ./tokenizer.json .
 ```
 
-This is useful when you want counts for a model-specific tokenizer outside the OpenAI family.
+Builtin families are embedded into the binary for offline use. A local tokenizer file is still
+useful when you want counts for a model-specific tokenizer outside the bundled set.
 
 ## Output
 
@@ -216,6 +226,7 @@ Options:
   -d, --max-depth <N>          Limit displayed depth. Deeper descendants are still counted in aggregates
       --tokenizer <TOKENIZER>  Select the tokenizer backend [default: openai] [possible values: openai, hf]
       --encoding <ENCODING>    Select the OpenAI encoding [default: o200k_base] [possible values: o200k_base, cl100k_base, p50k_base, r50k_base]
+      --hf-tokenizer <NAME>    Select a builtin HuggingFace tokenizer family [possible values: qwen3, deepseek_v3_2, glm5]
       --tokenizer-file <PATH>  Path to a HuggingFace tokenizer.json
       --binary <BINARY>        Binary file handling policy [default: skip] [possible values: skip, lossy, error]
       --no-ignore              Disable .gitignore, .ignore, and git exclude rules
@@ -257,6 +268,7 @@ tu --encoding cl100k_base prompt.md
 Count with a HuggingFace tokenizer:
 
 ```bash
+tu --tokenizer hf --hf-tokenizer qwen3 docs
 tu --tokenizer hf --tokenizer-file ./tokenizer.json docs
 ```
 
@@ -264,6 +276,7 @@ Compare OpenAI and HuggingFace tokenizers:
 
 ```bash
 tu --compare openai:o200k_base --compare hf:./tokenizer.json docs
+tu --compare hf_builtin:qwen3 --compare hf_builtin:glm5 docs
 ```
 
 Use in shell pipelines:

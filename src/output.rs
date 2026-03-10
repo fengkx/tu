@@ -1,7 +1,7 @@
 use serde::Serialize;
 
-use crate::cli::Cli;
 use crate::TokenizerRunResult;
+use crate::cli::Cli;
 use crate::scanner::{EntryStat, RootScanResult};
 use crate::tokenizer::{TokenizerConfig, TokenizerSpec};
 
@@ -104,11 +104,7 @@ fn render_text_compare(cli: &Cli, runs: &[TokenizerRunResult]) -> Result<String,
             })
             .collect::<Vec<_>>()
             .join("\t");
-        let path = row[0]
-            .as_ref()
-            .expect("aligned entry")
-            .path
-            .clone();
+        let path = row[0].as_ref().expect("aligned entry").path.clone();
         lines.push(format!("{path}\t{tokens}"));
     }
 
@@ -253,8 +249,8 @@ struct JsonCompareResult {
 #[cfg(test)]
 mod tests {
     use super::{humanize_tokens, render_json, render_text, sum_entries};
-    use crate::cli::Cli;
     use crate::TokenizerRunResult;
+    use crate::cli::Cli;
     use crate::scanner::{Diagnostic, DiagnosticLevel, EntryKind, EntryStat, RootScanResult};
     use crate::tokenizer::{OpenAiEncoding, TokenizerConfig};
     use clap::Parser;
@@ -329,23 +325,21 @@ mod tests {
     #[test]
     fn render_text_supports_human_and_total_rows() {
         let cli = Cli::parse_from(["tu", "--human", "--total", "first", "second"]);
-        let results = vec![
-            TokenizerRunResult {
-                tokenizer: TokenizerConfig::openai(OpenAiEncoding::O200kBase),
-                results: vec![
-                    RootScanResult {
-                        root: dir_entry("first", 1_500, 1),
-                        entries: vec![file_entry("first/file.txt", 1_500)],
-                        diagnostics: Vec::new(),
-                    },
-                    RootScanResult {
-                        root: dir_entry("second", 600, 1),
-                        entries: vec![file_entry("second/file.txt", 600)],
-                        diagnostics: Vec::new(),
-                    },
-                ],
-            },
-        ];
+        let results = vec![TokenizerRunResult {
+            tokenizer: TokenizerConfig::openai(OpenAiEncoding::O200kBase),
+            results: vec![
+                RootScanResult {
+                    root: dir_entry("first", 1_500, 1),
+                    entries: vec![file_entry("first/file.txt", 1_500)],
+                    diagnostics: Vec::new(),
+                },
+                RootScanResult {
+                    root: dir_entry("second", 600, 1),
+                    entries: vec![file_entry("second/file.txt", 600)],
+                    diagnostics: Vec::new(),
+                },
+            ],
+        }];
 
         let output = render_text(&cli, &results).expect("text");
 
