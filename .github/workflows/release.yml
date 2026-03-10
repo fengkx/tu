@@ -83,6 +83,9 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Generate bina manifest
         run: |
           cat > bina.json <<'EOF'
@@ -115,4 +118,4 @@ jobs:
       - name: Upload bina manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" bina.json --clobber
+        run: gh release upload "${GITHUB_REF_NAME}" bina.json --clobber --repo "${GITHUB_REPOSITORY}"
