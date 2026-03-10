@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, ValueEnum};
 
 use crate::scanner::{BinaryPolicy, ScanOptions};
-use crate::tokenizer::{OpenAiEncoding, TokenizerSpec};
+use crate::tokenizer::{OpenAiEncoding, TokenizerConfig};
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "tu", version, about = "Count tokens for files and directories")]
@@ -21,16 +21,20 @@ pub struct Cli {
     pub max_depth: Option<usize>,
 
     /// Select the tokenizer backend.
-    #[arg(long, value_enum, default_value_t = TokenizerKind::Openai)]
-    pub tokenizer: TokenizerKind,
+    #[arg(long, value_enum)]
+    pub tokenizer: Option<TokenizerKind>,
 
-    /// Select the OpenAI encoding.
-    #[arg(long, value_enum, default_value_t = OpenAiEncoding::O200kBase)]
-    pub encoding: OpenAiEncoding,
+    /// Select the OpenAI encoding. Defaults to `o200k_base`.
+    #[arg(long, value_enum)]
+    pub encoding: Option<OpenAiEncoding>,
 
     /// Path to a HuggingFace tokenizer.json.
     #[arg(long, value_name = "PATH")]
     pub tokenizer_file: Option<PathBuf>,
+
+    /// Compare multiple tokenizer specs. Repeatable.
+    #[arg(long, value_name = "SPEC")]
+    pub compare: Vec<String>,
 
     /// Binary file handling policy.
     #[arg(long, value_enum, default_value_t = BinaryPolicy::Skip)]
@@ -67,7 +71,18 @@ pub struct Cli {
 
 impl Cli {
     pub fn validate(&self) -> Result<(), String> {
-        match self.tokenizer {
+        if !self.compare.is_empty() {
+            if self.tokenizer.is_some() || self.encoding.is_some() || self.tokenizer_file.is_some() {
+                return Err(String::from(
+                    "--compare cannot be used with --tokenizer, --encoding, or --tokenizer-file",
+                ));
+            }
+
+            self.tokenizer_configs()?;
+            return Ok(());
+        }
+
+        match self.tokenizer_kind() {
             TokenizerKind::Openai => {
                 if self.tokenizer_file.is_some() {
                     return Err(String::from(
@@ -95,16 +110,46 @@ impl Cli {
                 .any(|path| path == std::path::Path::new("-"))
     }
 
-    pub fn tokenizer_spec(&self) -> Result<TokenizerSpec, String> {
-        match self.tokenizer {
-            TokenizerKind::Openai => Ok(TokenizerSpec::OpenAi {
-                encoding: self.encoding,
-            }),
-            TokenizerKind::Hf => Ok(TokenizerSpec::HuggingFace {
-                tokenizer_file: self.tokenizer_file.clone().ok_or_else(|| {
+    pub fn compare_mode(&self) -> bool {
+        !self.compare.is_empty()
+    }
+
+    pub fn tokenizer_kind(&self) -> TokenizerKind {
+        self.tokenizer.unwrap_or(TokenizerKind::Openai)
+    }
+
+    pub fn encoding(&self) -> OpenAiEncoding {
+        self.encoding.unwrap_or(OpenAiEncoding::O200kBase)
+    }
+
+    pub fn tokenizer_configs(&self) -> Result<Vec<TokenizerConfig>, String> {
+        if self.compare_mode() {
+            let configs = self
+                .compare
+                .iter()
+                .map(|value| TokenizerConfig::parse_compare_spec(value))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut labels = std::collections::BTreeSet::new();
+            for config in &configs {
+                if !labels.insert(config.label.clone()) {
+                    return Err(format!(
+                        "duplicate tokenizer label `{}` derived from --compare",
+                        config.label
+                    ));
+                }
+            }
+
+            return Ok(configs);
+        }
+
+        match self.tokenizer_kind() {
+            TokenizerKind::Openai => Ok(vec![TokenizerConfig::openai(self.encoding())]),
+            TokenizerKind::Hf => Ok(vec![TokenizerConfig::huggingface(
+                self.tokenizer_file.clone().ok_or_else(|| {
                     String::from("--tokenizer-file is required when --tokenizer hf is selected")
                 })?,
-            }),
+            )?]),
         }
     }
 }
@@ -137,7 +182,7 @@ mod tests {
     use clap::Parser;
 
     use super::{Cli, TokenizerKind};
-    use crate::tokenizer::{OpenAiEncoding, TokenizerSpec};
+    use crate::tokenizer::{OpenAiEncoding, TokenizerConfig};
 
     #[test]
     fn validate_rejects_hf_without_tokenizer_file() {
@@ -164,19 +209,17 @@ mod tests {
     }
 
     #[test]
-    fn tokenizer_spec_uses_o200k_by_default() {
+    fn tokenizer_configs_uses_o200k_by_default() {
         let cli = Cli::parse_from(["tu", "."]);
 
         assert_eq!(
-            cli.tokenizer_spec(),
-            Ok(TokenizerSpec::OpenAi {
-                encoding: OpenAiEncoding::O200kBase,
-            }),
+            cli.tokenizer_configs(),
+            Ok(vec![TokenizerConfig::openai(OpenAiEncoding::O200kBase)]),
         );
     }
 
     #[test]
-    fn tokenizer_spec_builds_hf_variant() {
+    fn tokenizer_configs_build_hf_variant() {
         let cli = Cli::parse_from([
             "tu",
             "--tokenizer",
@@ -187,10 +230,11 @@ mod tests {
         ]);
 
         assert_eq!(
-            cli.tokenizer_spec(),
-            Ok(TokenizerSpec::HuggingFace {
-                tokenizer_file: PathBuf::from("fixture.json"),
-            }),
+            cli.tokenizer_configs(),
+            Ok(vec![
+                TokenizerConfig::huggingface(PathBuf::from("fixture.json"))
+                    .expect("hf config"),
+            ]),
         );
     }
 
@@ -229,8 +273,66 @@ mod tests {
             ".",
         ]);
 
-        assert_eq!(cli.tokenizer, TokenizerKind::Hf);
-        assert_eq!(cli.encoding, OpenAiEncoding::Cl100kBase);
+        assert_eq!(cli.tokenizer, Some(TokenizerKind::Hf));
+        assert_eq!(cli.encoding, Some(OpenAiEncoding::Cl100kBase));
         assert_eq!(cli.paths, vec![Path::new(".")]);
+    }
+
+    #[test]
+    fn validate_rejects_compare_with_single_tokenizer_flags() {
+        let cli = Cli::parse_from([
+            "tu",
+            "--compare",
+            "openai:o200k_base",
+            "--encoding",
+            "cl100k_base",
+            ".",
+        ]);
+
+        assert_eq!(
+            cli.validate(),
+            Err(String::from(
+                "--compare cannot be used with --tokenizer, --encoding, or --tokenizer-file",
+            )),
+        );
+    }
+
+    #[test]
+    fn tokenizer_configs_build_compare_list_in_order() {
+        let cli = Cli::parse_from([
+            "tu",
+            "--compare",
+            "openai:o200k_base",
+            "--compare",
+            "hf:fixture.json",
+            ".",
+        ]);
+
+        assert_eq!(
+            cli.tokenizer_configs(),
+            Ok(vec![
+                TokenizerConfig::openai(OpenAiEncoding::O200kBase),
+                TokenizerConfig::huggingface(PathBuf::from("fixture.json")).expect("hf config"),
+            ]),
+        );
+    }
+
+    #[test]
+    fn tokenizer_configs_reject_duplicate_compare_labels() {
+        let cli = Cli::parse_from([
+            "tu",
+            "--compare",
+            "hf:foo/tokenizer.json",
+            "--compare",
+            "hf:bar/tokenizer.json",
+            ".",
+        ]);
+
+        assert_eq!(
+            cli.tokenizer_configs(),
+            Err(String::from(
+                "duplicate tokenizer label `hf:tokenizer.json` derived from --compare",
+            )),
+        );
     }
 }

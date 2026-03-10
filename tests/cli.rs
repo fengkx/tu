@@ -24,6 +24,26 @@ fn stdin_json_tokens(input: &str) -> u64 {
         .expect("stdin token count")
 }
 
+fn compare_json(input: &str, specs: &[&str]) -> Value {
+    let mut command = cargo_bin();
+    command.arg("--json");
+    for spec in specs {
+        command.arg("--compare").arg(spec);
+    }
+
+    let output = command
+        .arg("-")
+        .write_stdin(input)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+
+    serde_json::from_str(&stdout).expect("parse json")
+}
+
 #[test]
 fn respects_gitignore_by_default() {
     let tempdir = tempdir();
@@ -282,6 +302,75 @@ fn hf_backend_counts_using_fixture_tokenizer() {
     let stdout = String::from_utf8(output).expect("utf8 stdout");
 
     assert!(stdout.starts_with("1\t"));
+}
+
+#[test]
+fn compare_text_output_uses_wide_table() {
+    let output = cargo_bin()
+        .args([
+            "--compare",
+            "openai:o200k_base",
+            "--compare",
+            "openai:cl100k_base",
+            "-",
+        ])
+        .write_stdin("中文")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+
+    assert!(stdout.starts_with("path\to200k_base\tcl100k_base\n"));
+    assert!(stdout.contains("-\t1\t2\n"));
+}
+
+#[test]
+fn compare_json_output_supports_mixed_tokenizers() {
+    let hf_spec = format!(
+        "hf:{}",
+        fixture_path("hf-tokenizer.json")
+            .to_str()
+            .expect("utf8 fixture")
+    );
+    let json = compare_json("hello world", &["openai:o200k_base", &hf_spec]);
+
+    assert_eq!(json["tokenizers"][0]["label"], "o200k_base");
+    assert_eq!(json["tokenizers"][1]["label"], "hf:hf-tokenizer.json");
+    assert_eq!(json["results"][0]["total"]["tokens"], 2);
+    assert_eq!(json["results"][1]["total"]["tokens"], 1);
+    assert_eq!(json["had_errors"], false);
+}
+
+#[test]
+fn compare_rejects_single_tokenizer_flags() {
+    cargo_bin()
+        .args([
+            "--compare",
+            "openai:o200k_base",
+            "--encoding",
+            "cl100k_base",
+            ".",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--compare cannot be used with --tokenizer, --encoding, or --tokenizer-file",
+        ));
+}
+
+#[test]
+fn compare_stdin_matches_python_for_multiple_openai_encodings() {
+    let input = "中文\n";
+    let json = compare_json(input, &["openai:o200k_base", "openai:cl100k_base"]);
+    let expected_o200k = python_tiktoken_count("o200k_base", input);
+    let expected_cl100k = python_tiktoken_count("cl100k_base", input);
+
+    assert_eq!(json["results"][0]["label"], "o200k_base");
+    assert_eq!(json["results"][0]["total"]["tokens"], expected_o200k);
+    assert_eq!(json["results"][1]["label"], "cl100k_base");
+    assert_eq!(json["results"][1]["total"]["tokens"], expected_cl100k);
 }
 
 #[test]

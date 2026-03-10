@@ -142,6 +142,13 @@ tu --encoding p50k_base .
 tu --encoding r50k_base .
 ```
 
+Compare multiple tokenizers in one run:
+
+```bash
+tu --compare openai:o200k_base --compare openai:cl100k_base .
+tu --compare openai:o200k_base --compare hf:./tokenizer.json .
+```
+
 Available OpenAI encodings:
 
 - `o200k_base`
@@ -184,6 +191,9 @@ Use `--json` when you need machine-readable output:
 ```bash
 tu --json .
 ```
+
+When `--compare` is used, text output becomes a TSV table with `path` plus one column per
+tokenizer, and JSON output switches to a `tokenizers` + `results` structure.
 
 The JSON payload includes:
 
@@ -248,6 +258,12 @@ Count with a HuggingFace tokenizer:
 
 ```bash
 tu --tokenizer hf --tokenizer-file ./tokenizer.json docs
+```
+
+Compare OpenAI and HuggingFace tokenizers:
+
+```bash
+tu --compare openai:o200k_base --compare hf:./tokenizer.json docs
 ```
 
 Use in shell pipelines:
