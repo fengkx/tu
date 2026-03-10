@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.0.3 - 2026-03-10
+
+
+### Fixed
+
+- detect real git dirs before excluding
+
+
 ## v0.0.2 - 2026-03-10
 
 
