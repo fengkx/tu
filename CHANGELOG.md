@@ -23,6 +23,10 @@ All notable changes to this project will be documented in this file.
 
 - add release automation
 
+- fix release manifest upload
+
+- simplify release manifest upload
+
 
 ### Tests
 
