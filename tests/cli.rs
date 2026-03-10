@@ -80,6 +80,47 @@ fn no_ignore_includes_gitignored_files() {
 }
 
 #[test]
+fn excludes_git_directory_by_default() {
+    let tempdir = tempdir();
+    write_text(tempdir.path().join(".git").join("HEAD"), "ref: refs/heads/main\n");
+    write_text(tempdir.path().join(".git").join("config"), "hello world");
+
+    cargo_bin()
+        .args(["--all"])
+        .arg(tempdir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".git/config").not());
+}
+
+#[test]
+fn no_ignore_includes_repo_git_directory() {
+    let tempdir = tempdir();
+    write_text(tempdir.path().join(".git").join("HEAD"), "ref: refs/heads/main\n");
+    write_text(tempdir.path().join(".git").join("config"), "hello world");
+
+    cargo_bin()
+        .args(["--no-ignore", "--all"])
+        .arg(tempdir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".git/config"));
+}
+
+#[test]
+fn plain_git_named_directory_is_not_excluded() {
+    let tempdir = tempdir();
+    write_text(tempdir.path().join(".git").join("config"), "hello world");
+
+    cargo_bin()
+        .args(["--all"])
+        .arg(tempdir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".git/config"));
+}
+
+#[test]
 fn all_with_max_depth_hides_deeper_entries_but_keeps_aggregate() {
     let tempdir = tempdir();
     let nested = tempdir.path().join("level1").join("level2");

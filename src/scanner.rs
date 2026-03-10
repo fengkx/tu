@@ -82,6 +82,11 @@ struct FileEntry {
 }
 
 #[derive(Debug, Clone)]
+struct GitContext {
+    git_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
     pub message: String,
@@ -330,6 +335,10 @@ fn scan_directory(
     builder.git_exclude(options.respect_ignore);
     builder.ignore(options.respect_ignore);
     builder.require_git(false);
+    let git_context = options
+        .respect_ignore
+        .then(|| discover_git_context(root))
+        .flatten();
 
     let mut directories = BTreeMap::new();
     let mut files = Vec::new();
@@ -348,7 +357,7 @@ fn scan_directory(
         match result {
             Ok(entry) => {
                 let path = entry.path();
-                if should_exclude(root, path, &exclude_set) {
+                if should_exclude(root, path, &exclude_set, git_context.as_ref()) {
                     continue;
                 }
 
@@ -548,13 +557,48 @@ fn compile_excludes(patterns: &[String]) -> Result<GlobSet, String> {
     builder.build().map_err(|err| err.to_string())
 }
 
-fn should_exclude(root: &Path, path: &Path, exclude_set: &GlobSet) -> bool {
-    if exclude_set.is_empty() {
-        return false;
+fn discover_git_context(root: &Path) -> Option<GitContext> {
+    let mut current = Some(root);
+    while let Some(candidate) = current {
+        let dot_git = candidate.join(".git");
+        if let Some(git_dir) = resolve_git_dir(candidate, &dot_git) {
+            return Some(GitContext { git_dir });
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn resolve_git_dir(repo_root: &Path, dot_git: &Path) -> Option<PathBuf> {
+    let metadata = fs::symlink_metadata(dot_git).ok()?;
+    if metadata.is_dir() && dot_git.join("HEAD").is_file() {
+        return Some(dot_git.to_path_buf());
     }
 
+    if !metadata.is_file() {
+        return None;
+    }
+
+    let gitdir = fs::read_to_string(dot_git).ok()?;
+    let target = gitdir.strip_prefix("gitdir:")?.trim();
+    let resolved = repo_root.join(target);
+    let canonical = resolved.canonicalize().unwrap_or(resolved);
+
+    canonical.join("HEAD").is_file().then_some(canonical)
+}
+
+fn should_exclude(
+    root: &Path,
+    path: &Path,
+    exclude_set: &GlobSet,
+    git_context: Option<&GitContext>,
+) -> bool {
     let relative = path.strip_prefix(root).unwrap_or(path);
-    exclude_set.is_match(relative) || exclude_set.is_match(path)
+    let excluded_by_git_dir = git_context.is_some_and(|context| path.starts_with(&context.git_dir));
+    let excluded_by_glob =
+        !exclude_set.is_empty() && (exclude_set.is_match(relative) || exclude_set.is_match(path));
+
+    excluded_by_git_dir || excluded_by_glob
 }
 
 enum CountOutcome {
@@ -605,8 +649,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        BinaryPolicy, DiagnosticLevel, RootScanResult, ScanOptions, ScanRoot, scan_root,
-        validate_excludes,
+        BinaryPolicy, DiagnosticLevel, RootScanResult, ScanOptions, ScanRoot,
+        discover_git_context, resolve_git_dir, scan_root, validate_excludes,
     };
     use crate::tokenizer::{OpenAiEncoding, TokenizerBackend, TokenizerSpec};
 
@@ -691,6 +735,98 @@ mod tests {
         assert_eq!(result.root.tokens, 0);
         assert_eq!(result.root.files, 0);
         assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn scan_root_excludes_git_directory_by_default() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let git_dir = tempdir.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("create git dir");
+        fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("write head");
+        fs::write(git_dir.join("config"), "hello world").expect("write git config");
+
+        let mut tokenizer = openai_backend();
+        let result = scan_root(
+            &ScanRoot::Path(tempdir.path().to_path_buf()),
+            &scan_options(BinaryPolicy::Skip),
+            &mut tokenizer,
+            &[],
+        );
+
+        assert_eq!(result.root.tokens, 0);
+        assert_eq!(result.root.files, 0);
+    }
+
+    #[test]
+    fn scan_root_includes_repo_git_directory_with_no_ignore() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let git_dir = tempdir.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("create git dir");
+        fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("write head");
+        fs::write(git_dir.join("config"), "hello world").expect("write git config");
+
+        let mut tokenizer = openai_backend();
+        let mut options = scan_options(BinaryPolicy::Skip);
+        options.respect_ignore = false;
+        let result = scan_root(
+            &ScanRoot::Path(tempdir.path().to_path_buf()),
+            &options,
+            &mut tokenizer,
+            &[],
+        );
+
+        assert!(result.root.tokens > 0);
+        assert_eq!(result.root.files, 2);
+    }
+
+    #[test]
+    fn scan_root_does_not_exclude_plain_git_named_directory() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let git_dir = tempdir.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("create git dir");
+        fs::write(git_dir.join("config"), "hello world").expect("write git config");
+
+        let mut tokenizer = openai_backend();
+        let result = scan_root(
+            &ScanRoot::Path(tempdir.path().to_path_buf()),
+            &scan_options(BinaryPolicy::Skip),
+            &mut tokenizer,
+            &[],
+        );
+
+        assert!(result.root.tokens > 0);
+        assert_eq!(result.root.files, 1);
+    }
+
+    #[test]
+    fn discover_git_context_finds_head_directory() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let git_dir = tempdir.path().join(".git");
+        fs::create_dir_all(&git_dir).expect("create git dir");
+        fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("write head");
+
+        let context = discover_git_context(tempdir.path());
+
+        assert_eq!(
+            context.as_ref().map(|context| context.git_dir.clone()),
+            Some(git_dir),
+        );
+    }
+
+    #[test]
+    fn resolve_git_dir_supports_gitdir_file() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let actual_git_dir = tempdir.path().join("actual-git-dir");
+        fs::create_dir_all(&actual_git_dir).expect("create actual git dir");
+        fs::write(actual_git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("write head");
+        fs::write(tempdir.path().join(".git"), "gitdir: actual-git-dir\n").expect("write gitdir");
+
+        let resolved = resolve_git_dir(tempdir.path(), &tempdir.path().join(".git"));
+
+        assert_eq!(
+            resolved.as_deref().and_then(|path| path.file_name()),
+            actual_git_dir.file_name(),
+        );
     }
 
     #[test]

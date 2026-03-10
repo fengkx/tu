@@ -8,8 +8,8 @@ By default, `tu`:
 
 - uses OpenAI `o200k_base`
 - respects `.gitignore`, `.ignore`, and git exclude rules
+- excludes `.git` directories for detected git repositories by default
 - skips binary files with a warning
-- prints one summary line per input root
 
 ## Why
 
@@ -95,6 +95,7 @@ By default, `tu` respects:
 - `.ignore`
 - `.git/info/exclude`
 - global git ignore rules
+- `.git` directories for detected repositories are skipped by default
 
 Disable this behavior with:
 
