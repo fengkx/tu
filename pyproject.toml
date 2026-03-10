@@ -1,6 +1,6 @@
 [project]
 name = "tu-python-tools"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python tooling for tu integration tests"
 requires-python = ">=3.10"
 dependencies = []

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.0.2 - 2026-03-10
+
+
+### Added
+
+- add tokenizer compare mode
+
+- embed latest hf tokenizers
+
+- simplify builtin tokenizer selection
+
+
 ## v0.0.1 - 2026-03-10
 
 
